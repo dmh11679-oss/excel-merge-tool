@@ -20,12 +20,60 @@ except Exception:
 EXTS = (".xlsx", ".xls", ".csv")
 
 
-def read_csv_rows(path):
+def smart_cast(v):
+    """CSV 读进来一律是字符串，直接写进 xlsx 会导致「销量」列变成文本、无法求和。
+    这里只把『一看就是数字/日期』的字符串转成真数值，拿不准的一律保留原文（不擅自改数据）。"""
+    if v is None:
+        return ""
+    if not isinstance(v, str):
+        return v
+    s = v.strip()
+    if s == "":
+        return ""
+    # 千分位: 1,200 / -1,200.5
+    t = s
+    if "," in t:
+        import re as _re
+        if _re.fullmatch(r"-?\d{1,3}(,\d{3})+(\.\d+)?", t):
+            t = t.replace(",", "")
+        else:
+            return v  # 含逗号但不是千分位 → 保留原文
+    # 前导零视为编码（007 不能变成 7），一律保留文本
+    body = t.lstrip("-")
+    if body.isdigit() and len(body) > 1 and body.startswith("0"):
+        return v
+    # 整数/小数
+    try:
+        if body.isdigit():
+            return int(t)
+        if _isfloat(t):
+            return float(t)
+    except Exception:
+        pass
+    # 日期 2026-08-01 / 2026/08/01 / 2026-08-01 12:30:00
+    for fmt, as_date in (("%Y-%m-%d", True), ("%Y/%m/%d", True), ("%Y-%m-%d %H:%M:%S", False)):
+        try:
+            got = datetime.datetime.strptime(s, fmt)
+            return got.date() if as_date else got
+        except ValueError:
+            continue
+    return v
+
+
+def _isfloat(t):
+    try:
+        float(t)
+        return True
+    except ValueError:
+        return False
+
+
+def read_csv_rows(path, raw=False):
     import csv
     rows = []
     with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
         for r in csv.reader(f):
-            rows.append(r)
+            rows.append(r if raw else [smart_cast(c) for c in r])
     return rows
 
 
@@ -39,9 +87,9 @@ def read_xlsx_rows(path, sheet=None):
     return rows
 
 
-def load(path, sheet=None):
+def load(path, sheet=None, raw=False):
     if path.lower().endswith(".csv"):
-        return read_csv_rows(path)
+        return read_csv_rows(path, raw=raw)
     return read_xlsx_rows(path, sheet)
 
 
@@ -51,6 +99,7 @@ def main():
     ap.add_argument("-o", "--out", default=None, help="输出 xlsx，默认 <目录>/合并结果.xlsx")
     ap.add_argument("--sheet", default=None, help="指定工作表名（默认第一个）")
     ap.add_argument("--keep-header", action="store_true", help="每个文件都保留表头（默认只留第一份）")
+    ap.add_argument("--raw", action="store_true", help="CSV 不做数值/日期识别，全部按文本写入")
     a = ap.parse_args()
 
     if os.path.isdir(a.src):
@@ -72,7 +121,7 @@ def main():
     total, per_file = 0, []
     for f in files:
         try:
-            rows = load(f, a.sheet)
+            rows = load(f, a.sheet, raw=a.raw)
         except Exception as e:
             print("跳过 %s（读取失败: %s）" % (os.path.basename(f), str(e)[:60])); continue
         rows = [r for r in rows if any(str(c).strip() for c in r)]
