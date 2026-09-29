@@ -102,12 +102,18 @@ def main():
     ap.add_argument("--raw", action="store_true", help="CSV 不做数值/日期识别，全部按文本写入")
     a = ap.parse_args()
 
+    out = a.out or os.path.join(a.src if os.path.isdir(a.src) else os.path.dirname(a.src) or ".",
+                                "合并结果.xlsx")
+
     if os.path.isdir(a.src):
         files = [os.path.join(a.src, f) for f in sorted(os.listdir(a.src))
                  if f.lower().endswith(EXTS) and not f.startswith("~$")]
     else:
         files = [a.src]
     files = [f for f in files if os.path.isfile(f)]
+    # 输出文件默认就写在输入目录里，第二次跑会把自己也合并进去（行数翻倍）
+    out_abs = os.path.abspath(out)
+    files = [f for f in files if os.path.abspath(f) != out_abs]
     if not files:
         print("没找到可合并的文件（支持 xlsx/xls/csv）"); return 1
 
